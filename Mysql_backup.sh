@@ -1,11 +1,11 @@
 #!/bin/bash
 DATE=$(date +%d-%m-%Y-%H-%M-%S)
-BACKUP_DIR="/home/ihorturchyn"
-LOG_FILE="/home/ihorturchyn/Scripts/Log_file"
+BACKUP_DIR="path to directory"
+LOG_FILE="path to log file"
 Process=mysqld
 Checking=`ps -A | grep $Process`
 function backuping() {
-    souce_backup=$(mysqldump --user=root --password=S9DgmH}d --result-file=$BACKUP_DIR/Backup_$DATE.sql --all-databases)
+    souce_backup=$(mysqldump --user=root --password=[password] --result-file=$BACKUP_DIR/Backup_$DATE.sql --all-databases)
     if [ -f "$BACKUP_DIR/Backup_$DATE.sql" ]; then
         chmod +x "$BACKUP_DIR/Backup_$DATE.sql"
         tar -zcvpf $BACKUP_DIR/Backup_$DATE.sql.tar.gz $BACKUP_DIR/Backup_$DATE.sql
