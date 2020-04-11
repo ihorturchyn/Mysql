@@ -1,0 +1,44 @@
+#Initial data: Mysql version 8.0.19 for Linux Alpine
+
+#At first we need to add some changes into /etc/mysql/my.cnf config file at Master server:
+server-id=1                                           
+default-authentication-plugin=mysql_native_password    #to turn off cashing_sha2_password, which was implemented with Mysql 8.0 release.
+log-bin=/var/lib/mysql/mysql/mysql-bin.log             #path to binary log
+bonlog-do-db=<replicated_DB>                           #name of database, which you want to replicate.
+
+#Then we need to restart Mysql service:
+/etc/init.d/mysql restart
+
+#then we need to create new user at master server for replication:
+mysql -u<user> -p<password>
+create user 'slave_user'@'ip:port' identified with mysql_native_password by 'password';     #if you want to define slave_user with any IPs - you should use '%'
+grant replication slave on *.* to 'slave_user'@'ip:port';   #if you want to grant replication rights on certain db/table - you should use "...on *dbname.tablename"
+flush privileges;
+
+#then we need to lock all tables and make mysqldump of replicated_DB:
+use <>replicated_DB>;
+flush tables with read lock;
+mysqldump -u<user> -p<password> <replicated_DB> > replicated_DB.sql
+unlock tables;
+
+#then we need to check master status:
+show master status;
+#in output you will see mysql binaty file and his position. This file will be used by slave for reading changes.
+#Exanple: mysql-bin.000001, position - 157.
+
+#then we need to reconfig slave server:
+#at first we need to create database with name of <replicated_DB>. Name is same as it is created at Master.
+create database <replicated_DB>;
+#then we need to load mysqldump from Master server
+mysql -u<user> -p<password> <replicated_DB> < <replicated_DB>.sql
+
+#then we need to add some changes to /etc/mysql/my.cnf config file of slave server:
+server-id=2
+relay-log=/var/lib/mysql/mysql/mysql-relay-bin.log
+log-bin=/var/lib/mysql/mysql/mysql-bin.log
+binlog-do-db=<replicated_DB>
+
+#then we need to run replication at slave server:
+CHANGE MASTER TO MASTER_HOST='ip of master', MASTER_USER='slave_user', MASTER_PASSWORD='password',MASTER_LOG_FILE = 'mysql-bin.000001', MASTER_LOG_POS = 157;
+start slave;
+show slave status\G;  #here, in output, if near field Slave_IO_Running and Slave_SQL_Running you see "Yes" - all your changes were made correctly and replication is working now.
