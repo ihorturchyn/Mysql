@@ -1,0 +1,64 @@
+ #Initial data: Mysql version 8.0.19 for Linux Alpine
+
+#Setting for Master_1 server:
+#Lets add some changes to /etc/mysql/my.cnf config file at Master_1:
+server-id=1
+log_bin=/var/lib/mysql/mysql/mysql-bin.log
+binlog_do_db=<replicated_DB>
+bind-address=<IP of Master_1>
+
+#restarting mysql service:
+/etc/init.d/mysql restart
+
+#then we need to create new user at master server for replication:
+mysql -u<user> -p<password>
+create user 'slave_user'@'ip:port' identified with mysql_native_password by 'password';     #if you want to define slave_user with any IPs - you should use '%'
+grant replication slave on *.* to 'slave_user'@'ip:port';                                   #if you want to grant replication rights on certain db/table - you should use "...on *dbname.tablename"
+flush privileges;
+
+#then we need to check master status:
+show master status;
+#in output you will see mysql binaty file and his position. This file will be used by slave for reading changes.
+#Exanple: mysql-bin.000001, position - 157.
+
+#Setting for Master_2 server:
+#Lets add some changes to /etc/mysql/my.cnf config file at Master_1:
+server-id=2
+log_bin=/var/lib/mysql/mysql/mysql-bin.log
+binlog_do_db=<replicated_DB>
+bind-address=<IP of Master_2>
+
+#Then we need to restart Mysql service:
+/etc/init.d/mysql restart
+
+#then we need to check master status at Master_1:
+show master status;
+#in output you will see mysql binaty file and his position. This file will be used by slave for reading changes.
+#Exanple: mysql-bin.000001, position - 157.
+
+#at second Master server we need to create slave_user as it was done at Master_1 server:
+mysql -u<user> -p<password>
+create user 'slave_user'@'ip:port' identified with mysql_native_password by 'password';     #if you want to define slave_user with any IPs - you should use '%'
+grant replication slave on *.* to 'slave_user'@'ip:port';                                   #if you want to grant replication rights on certain db/table - you should use "...on *dbname.tablename"
+flush privileges;
+
+#at second Master we need to create same database for replication as it was done at Master_1:
+create database <replicated_DB>;
+
+#Setting replication at Master_2:
+slave stop; 
+CHANGE MASTER TO MASTER_HOST = 'IP of first Master', MASTER_USER = 'slave_user', MASTER_PASSWORD = 'password', MASTER_LOG_FILE = 'mysql-bin.000001', MASTER_LOG_POS = 157; 
+slave start;
+
+#Setting replication at Master_1:
+#we need to check master status at Master_1:
+show master status;
+#in output you will see mysql binary file and his position. This file will be used by slave for reading changes.
+#Exanple: mysql-bin.000004, position - 1347.
+#after this you need to run replication at first Master:
+slave stop;
+CHANGE MASTER TO MASTER_HOST = 'IP of first Master', MASTER_USER = 'replicator', MASTER_PASSWORD = 'password', MASTER_LOG_FILE = 'mysql-bin.000004', MASTER_LOG_POS = 1347; 
+slave start;
+
+#Verification:
+show slave status\G;  #here, in output, if near field Slave_IO_Running and Slave_SQL_Running you see "Yes" - all your changes were made correctly and replication is working now.
