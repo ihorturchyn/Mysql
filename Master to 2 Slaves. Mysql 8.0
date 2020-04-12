@@ -1,0 +1,90 @@
+#Purpose of this instruction is to show how to setup replications of 2 different databases from 1 Master to 2 Slave (1rt DB to Slave_1, 2nd DB to Slave_2)
+#Initical conditions: Mysql 8.0, 2 Slaves servers (below they named as Slave_1 and Slave_2) and 1 Master server. 
+#All 3 servers were upped using docker-compose. OS for upped containers - Linux Alpine (debian distribute).
+#On Master's servers we will replicate 2 databases, which named as master_1DB, master_2DB.
+
+#At first - we need to add some strings to /etc/mysql/my.cnf config file at Master's servers.
+#New strings for Master_1:
+server-id=1
+gtid-mode=ON
+enforce-gtid-consistency=true
+log-slave-updates=ON
+master-info-repository=TABLE
+relay-log-info-repository=TABLE
+log-bin=/var/lib/mysql/mysql/mysql-bin.log
+binlog-format=ROW
+default-authentication-plugin=mysql_native_password
+
+#Next step - is to add new strings to slave_1 and slave_2 servers my.cnf config file. Slave1:
+server-id=2
+gtid-mode=ON
+enforce-gtid-consistency=true
+master-info-repository=TABLE
+relay-log-info-repository=TABLE
+default-authentication-plugin=mysql_native_password
+
+#New strings for Slave2:
+server-id=3
+gtid-mode=ON
+enforce-gtid-consistency=true
+master-info-repository=TABLE
+relay-log-info-repository=TABLE
+default-authentication-plugin=mysql_native_password
+
+#New step - to create a user for replication on master servers:
+mysql> CREATE USER 'repl_user'@'%' IDENTIFIED with mysql_native_password BY 'password';
+mysql> GRANT REPLICATION SLAVE ON *.* TO 'repl_user'@'%';
+mysql> Flush privileges;
+
+#Next steps - Provisioning of data to slave server:
+# 1) you need to run mysqldump command on master server:
+mysqldump -u<user> -p<pass> --single-transaction --triggers --routines --set-gtid-purged=ON --databases master1_DB > master_1DB.sql
+mysqldump -u<user> -p<pass> --single-transaction --triggers --routines --set-gtid-purged=ON --databases master2_DB > master_2DB.sql
+
+# 2) Get GTID_PURGED information from dump files and remember this:
+cat master_1DB.sql | grep GTID_PURGED | perl -p0 -e 's#/\*.*?\*/##sg' | cut -f2 -d'=' | cut -f2 -d$'\''
+cat master_2DB.sql | grep GTID_PURGED | perl -p0 -e 's#/\*.*?\*/##sg' | cut -f2 -d'=' | cut -f2 -d$'\''
+#as the result you will see ourput info as "2174B383-5441-11E8-B90A-C80AA9429562:1-1029".
+
+# 3) we need to remove GTID_PURGED information from dump files before import:
+sed '/GTID_PURGED/d' master_1DB.sql > master_1DB_nopurge.sql
+sed '/GTID_PURGED/d' master_2DB.sql > master_2DB_nopurge.sql
+
+# 4) import data from mysqldumps "*_nopurge" to both Slave mysql servers:
+# to Slave_1:
+mysql -u<user> -p<password> < master_1DB_nopurge.sql
+# to Slave_2:
+mysql -u<user> -p<password> < master_2DB_nopurge.sql
+
+# 5) clear GTID state of slave server and set GTID_PURGED to values collected earlier at step 2):
+# Slave_1:
+mysql> RESET MASTER;
+mysql> SET @@GLOBAL.gtid_purged = "224DA167-0C0C-11E8-8442-00059A3C7B00:1-2695";
+# Slave_3:
+mysql> RESET MASTER;
+mysql> SET @@GLOBAL.gtid_purged = "224DA167-0C0C-11E8-8442-00059A3C7B00:1-2695";
+
+# 6) At slave servers we need to configure the replication channel and set the filter rule:
+# Slave_1:
+mysql> CHANGE MASTER TO MASTER_HOST=<master_host_IP>, MASTER_USER="repl_user", MASTER_PASSWORD="password", MASTER_AUTO_POSITION=1 FOR CHANNEL "master_1DB";
+# Slave_2:
+mysql> CHANGE MASTER TO MASTER_HOST=<master_host_IP>, MASTER_USER="repl_user", MASTER_PASSWORD="password", MASTER_AUTO_POSITION=1 FOR CHANNEL "master_2DB";
+#using this - you will replicate all Databases from master to both slaves. 
+
+# 7) If you want to replcate certain database from Master - you should execute this command at each slaves server:
+# Slave_1:
+mysql> CHANGE REPLICATION FILTER REPLICATE_WILD_DO_TABLE = ('master_1DB.%') FOR CHANNEL "master_1DB";
+# Slave_2:
+mysql> CHANGE REPLICATION FILTER REPLICATE_WILD_DO_TABLE = ('master_2DB.%') FOR CHANNEL "master_2DB";
+
+# 8) After this we start both channels:
+# Slave_1:
+mysql> START SLAVE FOR CHANNEL "master_1DB";
+# Slave_2:
+mysql> START SLAVE FOR CHANNEL "master_2DB";
+
+# 9) You can now looks at status with:
+# Slave_1:
+mysql> SHOW SLAVE STATUS FOR CHANNEL "master_1DB"\G
+# Slave_2:
+mysql> SHOW SLAVE STATUS FOR CHANNEL "master_2DB"\G
